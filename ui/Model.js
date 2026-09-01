@@ -1,9 +1,25 @@
+var MAX_STATUS_CHARS = 2048
+var MAX_TEXT = 48
+
+function clampText(value, maxLen) {
+  var limit = maxLen || MAX_TEXT
+  var s = String(value == null ? "" : value)
+  var out = ""
+  for (var i = 0; i < s.length && out.length < limit; i++) {
+    var code = s.charCodeAt(i)
+    if (code < 32 || code === 127 || code > 126) continue
+    out += s.charAt(i)
+  }
+  return out.replace(/^\s+|\s+$/g, "")
+}
+
 function shortName(model) {
-  var name = String(model || "G502 X")
+  var name = clampText(model, MAX_TEXT) || "G502 X"
   name = name.replace(/^Logitech\s+/i, "")
   name = name.replace(/\s+LIGHTSPEED$/i, "")
   name = name.replace(/\s+LS$/i, "")
   name = name.replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "")
+  name = clampText(name, 24)
   return name || "G502 X"
 }
 
@@ -11,10 +27,34 @@ function mouseIcon() {
   return "󰍽"
 }
 
+function allowStatus(value) {
+  var key = clampText(value, 32).toLowerCase()
+  if (key === "charging") return "Charging"
+  if (key === "discharging") return "Discharging"
+  if (key === "full") return "Full"
+  if (key === "not charging") return "Not charging"
+  if (key === "unknown") return "Unknown"
+  return ""
+}
+
 function parseStatus(raw) {
+  var text = String(raw || "")
+  if (text.length > MAX_STATUS_CHARS) return {}
   try {
-    var next = JSON.parse(String(raw || "").replace(/^\s+|\s+$/g, ""))
-    return next && typeof next === "object" ? next : {}
+    var next = JSON.parse(text.replace(/^\s+|\s+$/g, ""))
+    if (!next || typeof next !== "object" || Array.isArray(next)) return {}
+    var percent = parsePercent(next.percent)
+    var dpi = parseDpi(next.dpi)
+    return {
+      present: next.present === true,
+      model: clampText(next.model, MAX_TEXT),
+      percent: percent < 0 ? null : percent,
+      status: allowStatus(next.status),
+      charging: next.charging === true,
+      full: next.full === true,
+      discharging: next.discharging === true,
+      dpi: dpi > 0 ? dpi : null
+    }
   } catch (e) {
     return {}
   }
@@ -81,6 +121,14 @@ function chargeLabel(low, full, charging, discharging) {
   return "—"
 }
 
+function modeLabel(present, full, charging, discharging) {
+  if (!present) return "Not connected"
+  if (full) return "Fully charged"
+  if (charging) return "Charging"
+  if (discharging) return "Discharging"
+  return "Standing by"
+}
+
 function isOn(value) {
   return value === true || value === "true" || value === 1 || value === "1"
 }
@@ -101,8 +149,10 @@ function shouldWarnLowBattery(percent, discharging, threshold, alreadyNotified) 
 
 if (typeof module !== "undefined") {
   module.exports = {
+    clampText: clampText,
     shortName: shortName,
     mouseIcon: mouseIcon,
+    allowStatus: allowStatus,
     parseStatus: parseStatus,
     parsePercent: parsePercent,
     parseDpi: parseDpi,
@@ -111,6 +161,7 @@ if (typeof module !== "undefined") {
     nextDpi: nextDpi,
     batteryBand: batteryBand,
     chargeLabel: chargeLabel,
+    modeLabel: modeLabel,
     isOn: isOn,
     shouldWarnLowBattery: shouldWarnLowBattery
   }

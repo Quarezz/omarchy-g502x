@@ -30,7 +30,7 @@ This plugin is new code. It is not a fork. It does stand on other people’s wor
 - Omarchy (omarchy-shell)
 - A Logitech G502 X LIGHTSPEED on the LIGHTSPEED receiver (wireless PID `409F`)
 - Charge comes from the kernel HID++ battery. **No sudo or pkexec is required.**
-- DPI read/write uses the `logitech_receiver` Python module from Solaar. On Omarchy: `omarchy pkg add solaar`. If that library is missing, charge still works and DPI shows as —.
+- DPI read/write uses the `logitech_receiver` Python module from Solaar. Install Solaar with Omarchy’s package helper if you want DPI. If that library is missing, charge still works and DPI shows as —.
 
 ## Install
 

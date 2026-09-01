@@ -35,13 +35,9 @@ BarWidget {
     if (band === "green") return "#62c46f"
     return bar ? bar.barForeground : Color.foreground
   }
-  readonly property string modeLabel: {
-    if (!mousePresent) return "Not connected"
-    if (fullyCharged) return "Fully charged"
-    if (charging) return "Charging"
-    if (discharging) return "Discharging"
-    return String(status.status || "Standing by")
-  }
+  readonly property string modeLabel: Model.modeLabel(mousePresent, fullyCharged, charging, discharging)
+  readonly property int jobDeadlineMs: 2500
+  readonly property int maxStatusChars: 2048
 
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
@@ -71,16 +67,46 @@ BarWidget {
   }
 
   function applyStatus(raw) {
-    var next = Model.parseStatus(raw)
+    var text = String(raw || "")
+    if (text.length > root.maxStatusChars) return
+    var next = Model.parseStatus(text)
     if (!next || typeof next !== "object") return
     var keys = Object.keys(next)
     if (keys.length === 0) return
     status = next
   }
 
+  function stopProc(proc) {
+    if (!proc || !proc.running) return
+    proc.signal(15)
+    proc.running = false
+  }
+
+  function killProc(proc) {
+    if (!proc || !proc.running) return
+    proc.signal(9)
+    proc.running = false
+  }
+
+  function armJobWatch() {
+    killWatch.stop()
+    jobWatch.restart()
+  }
+
+  function disarmJobWatch() {
+    if (statusProc.running || dpiSetProc.running) return
+    jobWatch.stop()
+    killWatch.stop()
+  }
+
   function setDpi(value) {
     var next = Model.parseDpi(value)
-    if (next <= 0 || dpiSetProc.running) return
+    var allowed = Model.dpiPresets()
+    var ok = false
+    for (var i = 0; i < allowed.length; i++) {
+      if (allowed[i] === next) ok = true
+    }
+    if (!ok || dpiSetProc.running) return
     var merged = {}
     for (var key in status) merged[key] = status[key]
     merged.dpi = next
@@ -107,7 +133,7 @@ BarWidget {
       "-u", "critical",
       "--app-name", "G502 X",
       "Time to recharge!",
-      deviceTitle + " is down to " + level + "%",
+      "G502 X is down to " + String(level) + "%",
       "-t", "30000"
     ])
   }
@@ -163,6 +189,8 @@ BarWidget {
       onStreamFinished: root.applyStatus(text)
     }
     stderr: StdioCollector { waitForEnd: true }
+    onStarted: root.armJobWatch()
+    onExited: root.disarmJobWatch()
   }
 
   Process {
@@ -172,7 +200,34 @@ BarWidget {
       onStreamFinished: root.applyStatus(text)
     }
     stderr: StdioCollector { waitForEnd: true }
-    onExited: root.dpiBusy = false
+    onStarted: root.armJobWatch()
+    onExited: {
+      root.dpiBusy = false
+      root.disarmJobWatch()
+    }
+  }
+
+  Timer {
+    id: jobWatch
+    interval: root.jobDeadlineMs
+    repeat: false
+    onTriggered: {
+      root.stopProc(statusProc)
+      root.stopProc(dpiSetProc)
+      root.dpiBusy = false
+      killWatch.restart()
+    }
+  }
+
+  Timer {
+    id: killWatch
+    interval: 400
+    repeat: false
+    onTriggered: {
+      root.killProc(statusProc)
+      root.killProc(dpiSetProc)
+      root.dpiBusy = false
+    }
   }
 
   Timer {

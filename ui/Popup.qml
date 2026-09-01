@@ -95,6 +95,7 @@ Panel {
           Text {
             id: heroIcon
             text: root.mouseIcon
+            textFormat: Text.PlainText
             color: root.fillColor
             font.family: root.fontFamily
             font.pixelSize: Style.font.display
@@ -115,6 +116,7 @@ Panel {
 
             Text {
               text: root.deviceTitle
+              textFormat: Text.PlainText
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
@@ -126,6 +128,7 @@ Panel {
             Text {
               id: heroStatus
               text: root.heroStatusText.toUpperCase()
+              textFormat: Text.PlainText
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -139,6 +142,7 @@ Panel {
           Text {
             id: heroPercent
             text: root.batteryPercent >= 0 ? (root.batteryPercent + "%") : "—"
+            textFormat: Text.PlainText
             color: root.fillColor
             font.family: root.fontFamily
             font.pixelSize: Style.font.displayLarge
@@ -261,6 +265,7 @@ Panel {
   }
 
   component InfoLabel: Text {
+    textFormat: Text.PlainText
     color: root.bar ? root.bar.foreground : root.foreground
     opacity: 0.6
     font.family: root.fontFamily
@@ -268,6 +273,7 @@ Panel {
   }
 
   component InfoValue: Text {
+    textFormat: Text.PlainText
     color: root.bar ? root.bar.foreground : root.foreground
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
