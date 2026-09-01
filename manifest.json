@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "Quarezz",
   "license": "MIT",
-  "description": "G502 X LIGHTSPEED in the Omarchy bar: a green/yellow/red mouse for charge, plus charging state and DPI presets",
+  "description": "G502 X LIGHTSPEED charge and DPI in the Omarchy bar. Credits: Omarchy power panel, Solaar, AirPods for Omarchy",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "ui/G502.qml"
