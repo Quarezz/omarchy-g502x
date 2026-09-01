@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "morf.g502x",
+  "name": "G502 X",
+  "version": "1.0.0",
+  "author": "Quarezz",
+  "license": "MIT",
+  "description": "G502 X LIGHTSPEED in the Omarchy bar: a green/yellow/red mouse for charge, plus charging state and DPI presets",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "ui/G502.qml"
+  },
+  "barWidget": {
+    "displayName": "G502 X",
+    "description": "Charge color on the bar, charging state, and DPI switching",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "showPercentage": true,
+      "lowBatteryPercent": 15
+    },
+    "schema": [
+      {
+        "key": "showPercentage",
+        "type": "boolean",
+        "label": "Show charge on the bar",
+        "defaultValue": true,
+        "description": "When on, the bar shows the percent next to the mouse. Right-click the widget to toggle."
+      },
+      {
+        "key": "lowBatteryPercent",
+        "type": "integer",
+        "label": "Low-battery warning",
+        "min": 5,
+        "max": 40,
+        "step": 1,
+        "defaultValue": 15,
+        "description": "Percent. A notification is sent once when the mouse falls to this while discharging."
+      }
+    ]
+  }
+}
