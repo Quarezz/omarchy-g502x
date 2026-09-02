@@ -37,11 +37,14 @@ BarWidget {
   }
   readonly property string modeLabel: Model.modeLabel(mousePresent, fullyCharged, charging, discharging)
   readonly property int jobDeadlineMs: 2500
+  readonly property int killEscalateMs: 400
   readonly property int maxStatusChars: 2048
 
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
   property bool dpiBusy: false
+  property int statusJobPid: 0
+  property int dpiJobPid: 0
 
   function open() { if (panelLoader.item) panelLoader.item.open() }
   function close() { if (panelLoader.item) panelLoader.item.close() }
@@ -62,6 +65,14 @@ BarWidget {
     return decodeURIComponent(url.replace(/^file:\/\//, ""))
   }
 
+  function helperCommand(extra) {
+    var cmd = ["/usr/bin/setsid", "/usr/bin/python3", "-u", root.scriptPath("status.py")]
+    if (extra && extra.length) {
+      for (var i = 0; i < extra.length; i++) cmd.push(extra[i])
+    }
+    return cmd
+  }
+
   function refresh() {
     if (!statusProc.running && !dpiSetProc.running) statusProc.running = true
   }
@@ -76,16 +87,37 @@ BarWidget {
     status = next
   }
 
-  function stopProc(proc) {
-    if (!proc || !proc.running) return
-    proc.signal(15)
-    proc.running = false
+  function parsePid(value) {
+    var n = Number(value)
+    if (!isFinite(n) || n <= 1) return 0
+    return Math.round(n)
   }
 
-  function killProc(proc) {
-    if (!proc || !proc.running) return
-    proc.signal(9)
-    proc.running = false
+  function trackPid(proc, isDpi) {
+    var pid = parsePid(proc ? proc.processId : 0)
+    if (pid <= 1) return
+    if (isDpi) root.dpiJobPid = pid
+    else root.statusJobPid = pid
+  }
+
+  function signalTree(pid, sigName) {
+    if (pid <= 1) return
+    Quickshell.execDetached(["/usr/bin/kill", "-s", sigName, "--", "-" + String(pid)])
+    Quickshell.execDetached(["/usr/bin/kill", "-s", sigName, "--", String(pid)])
+  }
+
+  function requestStop() {
+    root.signalTree(root.statusJobPid, "TERM")
+    root.signalTree(root.dpiJobPid, "TERM")
+    root.dpiBusy = false
+  }
+
+  function forceKill() {
+    root.signalTree(root.statusJobPid, "KILL")
+    root.signalTree(root.dpiJobPid, "KILL")
+    root.statusJobPid = 0
+    root.dpiJobPid = 0
+    root.dpiBusy = false
   }
 
   function armJobWatch() {
@@ -96,7 +128,10 @@ BarWidget {
   function disarmJobWatch() {
     if (statusProc.running || dpiSetProc.running) return
     jobWatch.stop()
-    killWatch.stop()
+    if (!killWatch.running) {
+      root.statusJobPid = 0
+      root.dpiJobPid = 0
+    }
   }
 
   function setDpi(value) {
@@ -112,7 +147,7 @@ BarWidget {
     merged.dpi = next
     status = merged
     dpiBusy = true
-    dpiSetProc.command = ["/usr/bin/python3", root.scriptPath("status.py"), "--set-dpi", String(next)]
+    dpiSetProc.command = root.helperCommand(["--set-dpi", String(next)])
     dpiSetProc.running = true
   }
 
@@ -183,24 +218,36 @@ BarWidget {
 
   Process {
     id: statusProc
-    command: ["/usr/bin/python3", root.scriptPath("status.py")]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.applyStatus(text)
+    command: root.helperCommand([])
+    stdout: SplitParser {
+      splitMarker: "\n"
+      onRead: function(line) {
+        if (String(line).length > root.maxStatusChars) return
+        root.applyStatus(line)
+      }
     }
-    stderr: StdioCollector { waitForEnd: true }
-    onStarted: root.armJobWatch()
+    onStarted: {
+      root.trackPid(statusProc, false)
+      root.armJobWatch()
+    }
+    onProcessIdChanged: root.trackPid(statusProc, false)
     onExited: root.disarmJobWatch()
   }
 
   Process {
     id: dpiSetProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.applyStatus(text)
+    stdout: SplitParser {
+      splitMarker: "\n"
+      onRead: function(line) {
+        if (String(line).length > root.maxStatusChars) return
+        root.applyStatus(line)
+      }
     }
-    stderr: StdioCollector { waitForEnd: true }
-    onStarted: root.armJobWatch()
+    onStarted: {
+      root.trackPid(dpiSetProc, true)
+      root.armJobWatch()
+    }
+    onProcessIdChanged: root.trackPid(dpiSetProc, true)
     onExited: {
       root.dpiBusy = false
       root.disarmJobWatch()
@@ -212,22 +259,16 @@ BarWidget {
     interval: root.jobDeadlineMs
     repeat: false
     onTriggered: {
-      root.stopProc(statusProc)
-      root.stopProc(dpiSetProc)
-      root.dpiBusy = false
+      root.requestStop()
       killWatch.restart()
     }
   }
 
   Timer {
     id: killWatch
-    interval: 400
+    interval: root.killEscalateMs
     repeat: false
-    onTriggered: {
-      root.killProc(statusProc)
-      root.killProc(dpiSetProc)
-      root.dpiBusy = false
-    }
+    onTriggered: root.forceKill()
   }
 
   Timer {

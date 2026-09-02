@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import json
+import os
+import select
 import signal
 import sys
-from io import StringIO
+import time
 from pathlib import Path
 
 SYSFS_ROOT = Path("/sys/class/power_supply")
@@ -20,6 +22,8 @@ JOB_DEADLINE_SEC = 2.0
 MAX_SYSFS_BYTES = 256
 MAX_TEXT = 48
 MAX_JSON_BYTES = 2048
+MAX_STDERR_BYTES = 4096
+MAX_DPI_REPLY = 16
 MAX_BATTERY_NODES = 8
 KNOWN_MODELS = (
     "G502 X LIGHTSPEED",
@@ -35,14 +39,6 @@ STATUS_LABELS = {
     "not charging": "Not charging",
     "unknown": "Unknown",
 }
-
-
-class JobTimeout(Exception):
-    pass
-
-
-def _on_alarm(_signum, _frame) -> None:
-    raise JobTimeout("hid++ deadline")
 
 
 def _id(value) -> str:
@@ -228,28 +224,169 @@ def _set_dpi(dev, dpi: int) -> int | None:
     return int(current)
 
 
-def _hid_dpi(set_to: int | None) -> int | None:
-    stderr = sys.stderr
-    sys.stderr = StringIO()
-    previous = signal.getsignal(signal.SIGALRM)
+def _hid_dpi_work(set_to: int | None) -> int | None:
     matched = None
     try:
-        signal.signal(signal.SIGALRM, _on_alarm)
-        signal.setitimer(signal.ITIMER_REAL, JOB_DEADLINE_SEC)
         for dev in _devices():
             matched = dev
             if set_to is not None:
                 return _set_dpi(dev, set_to)
             return _read_dpi(dev)
-    except (JobTimeout, Exception):
+    except Exception:
         return None
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
-        sys.stderr = stderr
         if matched is not None:
             _close(matched)
     return None
+
+
+def _reap(pid: int) -> None:
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+
+
+def _kill_pid(pid: int) -> None:
+    if pid <= 1:
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    _reap(pid)
+
+
+def _silence_fd(target_fd: int) -> None:
+    try:
+        dn = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(dn, target_fd)
+        if dn != target_fd:
+            os.close(dn)
+    except OSError:
+        pass
+
+
+def _drain_stderr() -> None:
+    """Keep fd 2 from blocking, but never retain more than MAX_STDERR_BYTES."""
+    try:
+        r, w = os.pipe()
+    except OSError:
+        _silence_fd(2)
+        return
+    pid = os.fork()
+    if pid == 0:
+        os.close(w)
+        seen = 0
+        try:
+            while True:
+                chunk = os.read(r, 256)
+                if not chunk:
+                    break
+                seen += len(chunk)
+                if seen >= MAX_STDERR_BYTES:
+                    while os.read(r, 256):
+                        pass
+                    break
+        except OSError:
+            pass
+        os._exit(0)
+    os.close(r)
+    try:
+        os.dup2(w, 2)
+    finally:
+        os.close(w)
+
+
+def _become_session() -> None:
+    try:
+        os.setsid()
+    except OSError:
+        pass
+
+
+def _hid_dpi(set_to: int | None) -> int | None:
+    try:
+        r, w = os.pipe()
+    except OSError:
+        return None
+    try:
+        pid = os.fork()
+    except OSError:
+        os.close(r)
+        os.close(w)
+        return None
+    if pid == 0:
+        os.close(r)
+        _silence_fd(1)
+        _silence_fd(2)
+        try:
+            dpi = _hid_dpi_work(set_to)
+            msg = b"" if dpi is None else str(int(dpi)).encode("ascii")
+            os.write(w, msg[:MAX_DPI_REPLY])
+        except Exception:
+            pass
+        try:
+            os.close(w)
+        except OSError:
+            pass
+        os._exit(0)
+
+    os.close(w)
+    deadline = time.monotonic() + JOB_DEADLINE_SEC
+    buf = b""
+    dead = False
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            _kill_pid(pid)
+            break
+        try:
+            ready, _, _ = select.select([r], [], [], min(0.05, left))
+        except InterruptedError:
+            continue
+        if ready:
+            try:
+                chunk = os.read(r, MAX_DPI_REPLY)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                dead = True
+                break
+            buf += chunk
+            if len(buf) >= MAX_DPI_REPLY:
+                buf = buf[:MAX_DPI_REPLY]
+                break
+        try:
+            waited, _status = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            waited = pid
+        if waited:
+            dead = True
+            try:
+                extra = os.read(r, MAX_DPI_REPLY)
+                if extra:
+                    buf = (buf + extra)[:MAX_DPI_REPLY]
+            except OSError:
+                pass
+            break
+    try:
+        os.close(r)
+    except OSError:
+        pass
+    if not dead:
+        _kill_pid(pid)
+    else:
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+    if not buf:
+        return None
+    try:
+        return int(buf.decode("ascii"))
+    except ValueError:
+        return None
 
 
 def _parse_set_dpi(argv: list[str]) -> int | None:
@@ -264,6 +401,30 @@ def _parse_set_dpi(argv: list[str]) -> int | None:
     return value
 
 
+class _CappedStdout:
+    def __init__(self, inner, limit: int) -> None:
+        self._inner = inner
+        self._limit = limit
+        self._used = 0
+
+    def write(self, data) -> int:
+        text = data if isinstance(data, str) else bytes(data).decode("utf-8", "replace")
+        encoded = text.encode("utf-8", "replace")
+        remain = self._limit - self._used
+        if remain <= 0:
+            return len(text)
+        chunk = encoded[:remain]
+        self._used += len(chunk)
+        self._inner.write(chunk.decode("utf-8", "replace"))
+        return len(text)
+
+    def flush(self) -> None:
+        self._inner.flush()
+
+    def fileno(self) -> int:
+        return self._inner.fileno()
+
+
 def _emit(payload: dict) -> None:
     text = json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
     if len(text.encode("ascii", "replace")) > MAX_JSON_BYTES:
@@ -273,6 +434,10 @@ def _emit(payload: dict) -> None:
 
 
 def main() -> int:
+    _become_session()
+    _drain_stderr()
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    sys.stdout = _CappedStdout(sys.stdout, MAX_JSON_BYTES + 1)
     payload = _battery()
     wanted = _parse_set_dpi(sys.argv)
     if payload["present"]:
