@@ -23,7 +23,7 @@ MAX_SYSFS_BYTES = 256
 MAX_TEXT = 48
 MAX_JSON_BYTES = 2048
 MAX_STDERR_BYTES = 4096
-MAX_DPI_REPLY = 16
+MAX_HID_REPLY = 96
 MAX_BATTERY_NODES = 8
 KNOWN_MODELS = (
     "G502 X LIGHTSPEED",
@@ -197,6 +197,38 @@ def _devices():
                 yield item
 
 
+def _read_unified_battery(dev) -> dict:
+    from logitech_receiver.hidpp20_constants import SupportedFeature
+
+    reply = dev.feature_request(SupportedFeature.UNIFIED_BATTERY, 0x10)
+    if not reply or len(reply) < 4:
+        return {}
+    percent = int(reply[0])
+    status_byte = int(reply[2])
+    ext_power = int(reply[3])
+    if percent <= 0 or percent > 100:
+        percent = None
+    charging = status_byte in (1, 2, 4) or (ext_power != 0 and status_byte == 0)
+    full = status_byte == 3
+    discharging = status_byte == 0 and not charging
+    if full:
+        label = "Full"
+        charging = False
+    elif charging:
+        label = "Charging"
+    elif discharging:
+        label = "Discharging"
+    else:
+        label = "Unknown"
+    return {
+        "percent": percent,
+        "status": label,
+        "charging": charging,
+        "full": full,
+        "discharging": discharging,
+    }
+
+
 def _read_dpi(dev) -> int | None:
     from logitech_receiver.hidpp20_constants import SupportedFeature
 
@@ -224,20 +256,31 @@ def _set_dpi(dev, dpi: int) -> int | None:
     return int(current)
 
 
-def _hid_dpi_work(set_to: int | None) -> int | None:
+def _hid_work(set_to: int | None) -> dict:
     matched = None
+    out = {
+        "dpi": None,
+        "percent": None,
+        "status": "",
+        "charging": False,
+        "full": False,
+        "discharging": False,
+    }
     try:
         for dev in _devices():
             matched = dev
+            out.update(_read_unified_battery(dev))
             if set_to is not None:
-                return _set_dpi(dev, set_to)
-            return _read_dpi(dev)
+                out["dpi"] = _set_dpi(dev, set_to)
+            else:
+                out["dpi"] = _read_dpi(dev)
+            return out
     except Exception:
-        return None
+        return out
     finally:
         if matched is not None:
             _close(matched)
-    return None
+    return out
 
 
 def _reap(pid: int) -> None:
@@ -305,25 +348,33 @@ def _become_session() -> None:
         pass
 
 
-def _hid_dpi(set_to: int | None) -> int | None:
+def _hid_report(set_to: int | None) -> dict:
+    empty = {
+        "dpi": None,
+        "percent": None,
+        "status": "",
+        "charging": False,
+        "full": False,
+        "discharging": False,
+    }
     try:
         r, w = os.pipe()
     except OSError:
-        return None
+        return empty
     try:
         pid = os.fork()
     except OSError:
         os.close(r)
         os.close(w)
-        return None
+        return empty
     if pid == 0:
         os.close(r)
         _silence_fd(1)
         _silence_fd(2)
         try:
-            dpi = _hid_dpi_work(set_to)
-            msg = b"" if dpi is None else str(int(dpi)).encode("ascii")
-            os.write(w, msg[:MAX_DPI_REPLY])
+            payload = _hid_work(set_to)
+            msg = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+            os.write(w, msg[:MAX_HID_REPLY])
         except Exception:
             pass
         try:
@@ -347,15 +398,15 @@ def _hid_dpi(set_to: int | None) -> int | None:
             continue
         if ready:
             try:
-                chunk = os.read(r, MAX_DPI_REPLY)
+                chunk = os.read(r, MAX_HID_REPLY)
             except OSError:
                 chunk = b""
             if not chunk:
                 dead = True
                 break
             buf += chunk
-            if len(buf) >= MAX_DPI_REPLY:
-                buf = buf[:MAX_DPI_REPLY]
+            if len(buf) >= MAX_HID_REPLY:
+                buf = buf[:MAX_HID_REPLY]
                 break
         try:
             waited, _status = os.waitpid(pid, os.WNOHANG)
@@ -364,9 +415,9 @@ def _hid_dpi(set_to: int | None) -> int | None:
         if waited:
             dead = True
             try:
-                extra = os.read(r, MAX_DPI_REPLY)
+                extra = os.read(r, MAX_HID_REPLY)
                 if extra:
-                    buf = (buf + extra)[:MAX_DPI_REPLY]
+                    buf = (buf + extra)[:MAX_HID_REPLY]
             except OSError:
                 pass
             break
@@ -382,11 +433,14 @@ def _hid_dpi(set_to: int | None) -> int | None:
         except ChildProcessError:
             pass
     if not buf:
-        return None
+        return empty
     try:
-        return int(buf.decode("ascii"))
-    except ValueError:
-        return None
+        next_payload = json.loads(buf.decode("ascii"))
+    except (ValueError, UnicodeDecodeError):
+        return empty
+    if not isinstance(next_payload, dict):
+        return empty
+    return next_payload
 
 
 def _parse_set_dpi(argv: list[str]) -> int | None:
@@ -464,7 +518,22 @@ def main() -> int:
     _payload = payload
     wanted = _parse_set_dpi(sys.argv)
     if payload["present"]:
-        payload["dpi"] = _hid_dpi(wanted)
+        hid = _hid_report(wanted)
+        if hid.get("dpi") is not None:
+            try:
+                payload["dpi"] = int(hid["dpi"])
+            except (TypeError, ValueError):
+                payload["dpi"] = None
+        if hid.get("percent") is not None:
+            try:
+                payload["percent"] = max(0, min(100, int(hid["percent"])))
+            except (TypeError, ValueError):
+                pass
+        if hid.get("status") in STATUS_LABELS.values():
+            payload["status"] = hid["status"]
+            payload["charging"] = hid.get("charging") is True
+            payload["full"] = hid.get("full") is True
+            payload["discharging"] = hid.get("discharging") is True
         _payload = payload
     _payload = None
     _emit(payload)

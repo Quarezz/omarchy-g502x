@@ -46,13 +46,13 @@ function parseStatus(raw) {
     var percent = parsePercent(next.percent)
     var dpi = parseDpi(next.dpi)
     return {
-      present: next.present === true,
+      present: isOn(next.present),
       model: clampText(next.model, MAX_TEXT),
       percent: percent < 0 ? null : percent,
       status: allowStatus(next.status),
-      charging: next.charging === true,
-      full: next.full === true,
-      discharging: next.discharging === true,
+      charging: isOn(next.charging),
+      full: isOn(next.full),
+      discharging: isOn(next.discharging),
       dpi: dpi > 0 ? dpi : null
     }
   } catch (e) {

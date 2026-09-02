@@ -17,13 +17,13 @@ BarWidget {
   }
 
   property var status: ({})
-  readonly property bool mousePresent: status.present === true
+  readonly property bool mousePresent: Model.isOn(status.present)
   readonly property string deviceTitle: Model.shortName(status.model)
   readonly property int batteryPercent: Model.parsePercent(status.percent)
   readonly property real batteryFraction: batteryPercent < 0 ? 0 : batteryPercent / 100
-  readonly property bool charging: status.charging === true
-  readonly property bool discharging: status.discharging === true
-  readonly property bool fullyCharged: status.full === true
+  readonly property bool charging: Model.isOn(status.charging)
+  readonly property bool discharging: Model.isOn(status.discharging)
+  readonly property bool fullyCharged: Model.isOn(status.full)
   readonly property bool lowBattery: mousePresent && discharging && batteryPercent >= 0 && batteryPercent <= lowBatteryPercent
   readonly property string mouseIcon: Model.mouseIcon()
   readonly property int dpi: Model.parseDpi(status.dpi)
