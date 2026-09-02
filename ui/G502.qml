@@ -66,7 +66,7 @@ BarWidget {
   }
 
   function helperCommand(extra) {
-    var cmd = ["/usr/bin/setsid", "/usr/bin/python3", "-u", root.scriptPath("status.py")]
+    var cmd = ["/usr/bin/python3", "-u", root.scriptPath("status.py")]
     if (extra && extra.length) {
       for (var i = 0; i < extra.length; i++) cmd.push(extra[i])
     }
@@ -219,11 +219,11 @@ BarWidget {
   Process {
     id: statusProc
     command: root.helperCommand([])
-    stdout: SplitParser {
-      splitMarker: "\n"
-      onRead: function(line) {
-        if (String(line).length > root.maxStatusChars) return
-        root.applyStatus(line)
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (String(text).length > root.maxStatusChars) return
+        root.applyStatus(text)
       }
     }
     onStarted: {
@@ -236,11 +236,11 @@ BarWidget {
 
   Process {
     id: dpiSetProc
-    stdout: SplitParser {
-      splitMarker: "\n"
-      onRead: function(line) {
-        if (String(line).length > root.maxStatusChars) return
-        root.applyStatus(line)
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (String(text).length > root.maxStatusChars) return
+        root.applyStatus(text)
       }
     }
     onStarted: {

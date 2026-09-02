@@ -433,17 +433,40 @@ def _emit(payload: dict) -> None:
     sys.stdout.flush()
 
 
+_payload = None
+
+
+def _flush_payload() -> None:
+    global _payload
+    if _payload is None:
+        return
+    try:
+        _emit(_payload)
+    except Exception:
+        pass
+    _payload = None
+
+
+def _on_term(_signum, _frame) -> None:
+    _flush_payload()
+    os._exit(0)
+
+
 def main() -> int:
+    global _payload
     _become_session()
     _drain_stderr()
     sys.stderr = open(os.devnull, "w", encoding="utf-8")
     sys.stdout = _CappedStdout(sys.stdout, MAX_JSON_BYTES + 1)
+    signal.signal(signal.SIGTERM, _on_term)
     payload = _battery()
+    payload["dpi"] = None
+    _payload = payload
     wanted = _parse_set_dpi(sys.argv)
     if payload["present"]:
         payload["dpi"] = _hid_dpi(wanted)
-    else:
-        payload["dpi"] = None
+        _payload = payload
+    _payload = None
     _emit(payload)
     return 0
 
