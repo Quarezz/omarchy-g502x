@@ -1,8 +1,8 @@
 # G502 X for Omarchy
 
-A bar widget for the Logitech G502 X LIGHTSPEED. The mouse on the bar turns **green, yellow, or red** with the charge. Click it for percent, charging state, LIGHTSPEED, and DPI presets.
+A bar widget for the Logitech G502 X family (LIGHTSPEED and PLUS). The mouse on the bar turns **green, yellow, or red** with the charge. Click it for percent, charging state, LIGHTSPEED, and DPI presets.
 
-![G502 X panel: charge, LIGHTSPEED, and DPI presets](preview.png)
+![G502 X panel: charge, LIGHTSPEED, the DPI slider and presets](preview.png)
 
 ## Store blurb
 
@@ -20,15 +20,15 @@ This plugin is new code. It is not a fork. It does stand on other people’s wor
 
 ## What it shows
 
-- **Bar** — mouse glyph only, colored by charge: green at 50%+, yellow under 50%, red under 25%
+- **Bar** — mouse glyph only, colored by charge: green at 50%+, yellow under 50%, red under 25%. Hover for the model, charge, state and DPI
 - **Panel** — percent, charging or discharging, LIGHTSPEED, current DPI
-- **Sensitivity** — 400 / 800 / 1600 / 3200 / 6400, same control style as power profiles
+- **Sensitivity** — a slider over the usual 400–6400 range (steps of 50, and it widens if your mouse sits outside that) plus the preset row 400 / 800 / 1600 / 3200 / 6400, same control style as power profiles
 - **Low battery** — one critical notification when discharging hits the threshold (default 15%)
 
 ## Requirements
 
 - Omarchy (omarchy-shell)
-- A Logitech G502 X LIGHTSPEED on the LIGHTSPEED receiver (wireless PID `409F`)
+- A Logitech G502 X LIGHTSPEED (wireless PID `409F`) or G502 X PLUS (wireless PID `4099`) on the LIGHTSPEED receiver
 - Charge comes from the kernel HID++ battery. **No sudo or pkexec is required.**
 - DPI read/write uses the `logitech_receiver` Python module from Solaar. Install Solaar with Omarchy’s package helper if you want DPI. If that library is missing, charge still works and DPI shows as —.
 
@@ -60,6 +60,16 @@ Nothing else is written. Removing the plugin does not change onboard mouse profi
 | Key | Default | Description |
 | --- | --- | --- |
 | `lowBatteryPercent` | 15 | Notify once when discharging reaches this percent (5–40). |
+
+## Development
+
+The panel's pure logic — status parsing, DPI validation, the low-battery rule — has tests:
+
+```bash
+node --test tests/
+```
+
+Node's built-in runner, no dependencies and no build step. The QML wiring and the device itself are not covered and stay manual.
 
 ## License
 

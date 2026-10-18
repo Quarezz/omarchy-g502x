@@ -1,6 +1,16 @@
 var MAX_STATUS_CHARS = 2048
 var MAX_TEXT = 48
 
+// What the HID++ ADJUSTABLE_DPI feature takes.
+var DPI_MIN = 100
+var DPI_MAX = 25600
+var DPI_STEP = 50
+
+// The slider covers the range people actually use; presets and the helper still
+// reach the rest of the sensor (DPI_MIN..DPI_MAX).
+var DPI_SLIDER_MIN = 400
+var DPI_SLIDER_MAX = 6400
+
 function clampText(value, maxLen) {
   var limit = maxLen || MAX_TEXT
   var s = String(value == null ? "" : value)
@@ -60,11 +70,13 @@ function parseStatus(raw) {
   }
 }
 
+// -1 means "no reading" and every caller checks for it, so the helper's own
+// -1 (and any negative value) must not come back as a healthy-looking 0%.
 function parsePercent(value) {
   if (value === null || value === undefined || value === "") return -1
   var n = Number(value)
-  if (!isFinite(n)) return -1
-  return Math.max(0, Math.min(100, Math.round(n)))
+  if (!isFinite(n) || n < 0) return -1
+  return Math.min(100, Math.round(n))
 }
 
 function parseDpi(value) {
@@ -103,6 +115,40 @@ function nextDpi(current, delta) {
   if (idx < 0) idx = best
   idx = Math.max(0, Math.min(list.length - 1, idx + (step > 0 ? 1 : -1)))
   return list[idx]
+}
+
+function dpiMin() {
+  return DPI_MIN
+}
+
+function dpiMax() {
+  return DPI_MAX
+}
+
+function dpiStep() {
+  return DPI_STEP
+}
+
+function dpiSliderMin() {
+  return DPI_SLIDER_MIN
+}
+
+function dpiSliderMax() {
+  return DPI_SLIDER_MAX
+}
+
+// The presets are a shortcut, not the whole range: the slider and the helper
+// both take any value the sensor can do.
+function isValidDpi(value) {
+  var n = parseDpi(value)
+  return n >= DPI_MIN && n <= DPI_MAX && n % DPI_STEP === 0
+}
+
+function snapDpi(value) {
+  var n = parseDpi(value)
+  if (n < 0) return n
+  n = Math.round(n / DPI_STEP) * DPI_STEP
+  return Math.max(DPI_MIN, Math.min(DPI_MAX, n))
 }
 
 function batteryBand(percent) {
@@ -158,6 +204,13 @@ if (typeof module !== "undefined") {
     parseDpi: parseDpi,
     formatDpi: formatDpi,
     dpiPresets: dpiPresets,
+    dpiMin: dpiMin,
+    dpiMax: dpiMax,
+    dpiStep: dpiStep,
+    dpiSliderMin: dpiSliderMin,
+    dpiSliderMax: dpiSliderMax,
+    isValidDpi: isValidDpi,
+    snapDpi: snapDpi,
     nextDpi: nextDpi,
     batteryBand: batteryBand,
     chargeLabel: chargeLabel,

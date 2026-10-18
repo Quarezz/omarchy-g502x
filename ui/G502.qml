@@ -36,6 +36,14 @@ BarWidget {
     return bar ? bar.barForeground : Color.foreground
   }
   readonly property string modeLabel: Model.modeLabel(mousePresent, fullyCharged, charging, discharging)
+  readonly property string tooltipText: {
+    if (!mousePresent) return "G502 X — not connected"
+    var bits = [deviceTitle]
+    if (batteryPercent >= 0) bits.push(String(batteryPercent) + "%")
+    if (modeLabel) bits.push(modeLabel)
+    if (dpi > 0) bits.push(Model.formatDpi(dpi))
+    return bits.join(" · ")
+  }
   readonly property int jobDeadlineMs: 2500
   readonly property int killEscalateMs: 400
   readonly property int maxStatusChars: 2048
@@ -136,12 +144,7 @@ BarWidget {
 
   function setDpi(value) {
     var next = Model.parseDpi(value)
-    var allowed = Model.dpiPresets()
-    var ok = false
-    for (var i = 0; i < allowed.length; i++) {
-      if (allowed[i] === next) ok = true
-    }
-    if (!ok || dpiSetProc.running) return
+    if (!Model.isValidDpi(next) || dpiSetProc.running) return
     var merged = {}
     for (var key in status) merged[key] = status[key]
     merged.dpi = next
@@ -162,13 +165,14 @@ BarWidget {
   }
 
   function sendLowBatteryWarning(level) {
+    var name = root.deviceTitle
     Quickshell.execDetached([
       "omarchy-notification-send",
       "-g", root.mouseIcon,
       "-u", "critical",
-      "--app-name", "G502 X",
+      "--app-name", name,
       "Time to recharge!",
-      "G502 X is down to " + String(level) + "%",
+      name + " is down to " + String(level) + "%",
       "-t", "30000"
     ])
   }
@@ -295,7 +299,7 @@ BarWidget {
     foreground: root.batteryColor
     text: root.mouseIcon
     slotSize: Style.bar.iconSlot
-    tooltipText: ""
+    tooltipText: root.tooltipText
     onPressed: function(b) {
       if (!root.mousePresent) return
       root.togglePanel()

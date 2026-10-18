@@ -13,21 +13,34 @@ from pathlib import Path
 
 SYSFS_ROOT = Path("/sys/class/power_supply")
 
-# G502 X LIGHTSPEED on the LIGHTSPEED dongle only.
+# G502 X family on the LIGHTSPEED dongle only.
 TRUSTED_VID = "046D"
 TRUSTED_RECEIVER_PID = "C547"
-TRUSTED_WPID = "409F"
+# 409F: G502 X LIGHTSPEED, 4099: G502 X PLUS
+TRUSTED_WPIDS = ("409F", "4099")
 
 JOB_DEADLINE_SEC = 2.0
 MAX_SYSFS_BYTES = 256
 MAX_TEXT = 48
 MAX_JSON_BYTES = 2048
 MAX_STDERR_BYTES = 4096
-MAX_HID_REPLY = 96
+# The HID++ reply JSON is ~100 bytes at its widest (dpi, percent, a status
+# label and three flags). Cutting it short at this bound leaves invalid JSON,
+# and an unparsable reply is dropped exactly like a missing mouse, which
+# silently costs the DPI reading.
+MAX_HID_REPLY = 256
 MAX_BATTERY_NODES = 8
+# What the HID++ ADJUSTABLE_DPI feature takes. Checking the range instead of a
+# copy of the shipped presets keeps the helper and the panel from drifting
+# apart - a stale copy silently drops writes.
+DPI_MIN = 100
+DPI_MAX = 25600
+DPI_STEP = 50
 KNOWN_MODELS = (
     "G502 X LIGHTSPEED",
     "Logitech G502 X LIGHTSPEED",
+    "G502 X PLUS",
+    "Logitech G502 X PLUS",
     "Logitech G502 X LS",
     "G502 X LS",
     "G502 X",
@@ -85,7 +98,7 @@ def _trusted_battery(entry: Path) -> bool:
     except OSError:
         return False
     vid, pid = _hid_vid_pid(_read(hid / "uevent"))
-    if vid != TRUSTED_VID or pid != TRUSTED_WPID:
+    if vid != TRUSTED_VID or pid not in TRUSTED_WPIDS:
         return False
     parent = hid.parent
     if parent is None:
@@ -103,7 +116,11 @@ def _model_label(raw: str) -> str:
     for known in KNOWN_MODELS:
         if name.casefold() == known.casefold():
             return known
-    return "G502 X"
+    # Not one of the spellings above: report the name the device gave rather
+    # than assuming the base model, since a PLUS labelled "G502 X" would be
+    # wrong on the bar, in the panel and in the notification. _plain has already
+    # bounded it to printable ASCII and MAX_TEXT, so it is safe to display.
+    return name or "G502 X"
 
 
 def _empty_battery() -> dict:
@@ -157,7 +174,7 @@ def _trusted_receiver(info) -> bool:
 
 
 def _trusted_device(dev) -> bool:
-    if _id(getattr(dev, "wpid", None)) != TRUSTED_WPID:
+    if _id(getattr(dev, "wpid", None)) not in TRUSTED_WPIDS:
         return False
     rec = getattr(dev, "receiver", None)
     rec_pid = _id(getattr(rec, "product_id", None) if rec is not None else None)
@@ -450,7 +467,7 @@ def _parse_set_dpi(argv: list[str]) -> int | None:
         value = int(argv[2])
     except ValueError:
         return None
-    if value not in (400, 800, 1600, 3200, 6400):
+    if value < DPI_MIN or value > DPI_MAX or value % DPI_STEP:
         return None
     return value
 
